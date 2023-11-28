@@ -1,6 +1,10 @@
 from typing import Callable, List, Tuple
-
 from functools import partial
+
+import os
+from pathlib import Path
+
+
 
 from tqdm import tqdm
 
@@ -151,7 +155,9 @@ class UNET_MnistDiffusion(nn.Module):
         d2, h2 = self.down2(d1)  # [128, 8, 8]
         d3, h3 = self.down3(d2)
 
-        u2 = self.up3(d3)  # [128, 8, 8]
+        e = d3
+
+        u2 = self.up3(e)  # [128, 8, 8]
         u2 = u2 + self.highway2(h3)
         u1 = self.up2(u2)  # [64, 16, 16]
         u1 = u1 + self.highway1(h2)
@@ -193,6 +199,10 @@ class NoiseEstimator(nn.Module):
 
 noise_estimator = NoiseEstimator(noise_scales)
 ddpm = DDPM(noise_scales, noise_estimator)
+
+num_trainable_params = sum([p.numel() for p in ddpm.parameters()])
+print(f"Number of parameters: {num_trainable_params}")
+
 Convert.model_to_device(ddpm)
 
 
@@ -200,7 +210,7 @@ train_set, test_set = Mnist.get(flatten_x=True)
 train_loader = DataLoader(train_set, 128)
 
 if __name__ == '__main__':
-    n_epoches = 1000
+    n_epoches = 40
 
     show_image(Convert.to_numpy(noise_estimator.temporal_embedding_model.embedding))
 
@@ -218,6 +228,7 @@ if __name__ == '__main__':
         ys = torch.clip(ys, 0, 1)
         # ys = xs[:16]
         ys = Convert.to_numpy(ys).reshape([4, 4, 28, 28])
-        ys = np.swapaxes(ys, 1, 2)  # [4, 28, 4, 28]
-        ys = ys.reshape(4 * 28, 4 * 28)
-        show_image(ys / 2 + 0.5)
+        show_image(ys / 2 + 0.5, n_batch_dims=2)
+
+    Path("./output").mkdir(exist_ok=True)
+    torch.save(ddpm.state_dict(), "./output/ddpm_mnist1.pth")

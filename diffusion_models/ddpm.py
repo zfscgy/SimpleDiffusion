@@ -23,15 +23,17 @@ class DDPM(nn.Module):
         # self.optimizer = optim.SGD(noise_estimator.parameters(), 0.1, momentum=0.9)
         self.optimizer = optim.Adam(noise_estimator.parameters())
 
-    def train_one_batch(self, xs: torch.Tensor, steps: torch.Tensor):
+    def noisy_forward(self, xs, steps):
         noise = torch.normal(0, 1, xs.shape, device=xs.device)
-
         # The noisy x at step t
         xs_t = torch.sqrt(self.accumulated_scales[steps]).view(-1, 1) * xs + \
                (torch.sqrt(1 - self.accumulated_scales[steps])).view(-1, 1) * noise
+        return xs_t, noise
+
+    def train_one_batch(self, xs: torch.Tensor, steps: torch.Tensor):
+        xs_t, noise = self.noisy_forward(xs, steps)
         predicted_noise = self.noise_estimator(xs_t, steps)
         loss = torch.mean(torch.square(predicted_noise - noise))
-
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
