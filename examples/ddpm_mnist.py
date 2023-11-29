@@ -214,21 +214,102 @@ if __name__ == '__main__':
 
     show_image(Convert.to_numpy(noise_estimator.temporal_embedding_model.embedding))
 
-    for i in range(n_epoches):
-        losses = []
-        for xs, _ in tqdm(train_loader):
-            xs = Convert.to_tensor(xs)
-            xs = xs * 2 - 1
-            steps = torch.randint(0, len(noise_scales), [xs.shape[0]])
-            loss = ddpm.train_one_batch(xs, steps)
-            losses.append(loss)
-        print(f"AVG train loss at epoch {i}: {np.mean(losses):.4f}")
+    saved_model_name = "./output/ddpm_mnist1.pth"
 
-        ys = ddpm.sample(Convert.to_tensor(torch.normal(0, 1, [16, 784])))
-        ys = torch.clip(ys, 0, 1)
-        # ys = xs[:16]
-        ys = Convert.to_numpy(ys).reshape([4, 4, 28, 28])
-        show_image(ys / 2 + 0.5, n_batch_dims=2)
+    def train_model():
+        for i in range(n_epoches):
+            losses = []
+            for xs, _ in tqdm(train_loader):
+                xs = Convert.to_tensor(xs)
+                xs = xs * 2 - 1
+                steps = torch.randint(0, len(noise_scales), [xs.shape[0]])
+                loss = ddpm.train_one_batch(xs, steps)
+                losses.append(loss)
+            print(f"AVG train loss at epoch {i}: {np.mean(losses):.4f}")
 
-    Path("./output").mkdir(exist_ok=True)
-    torch.save(ddpm.state_dict(), "./output/ddpm_mnist1.pth")
+            ys = ddpm.sample(Convert.to_tensor(torch.normal(0, 1, [16, 784])))
+            ys = torch.clip(ys, 0, 1)
+            # ys = xs[:16]
+            ys = Convert.to_numpy(ys).reshape([4, 4, 28, 28])
+            show_image(ys / 2 + 0.5, n_batch_dims=2)
+
+        Path("./output").mkdir(exist_ok=True)
+        torch.save(ddpm.state_dict(), saved_model_name)
+
+
+
+    try:
+        ddpm.load_state_dict(torch.load(saved_model_name))
+    except FileNotFoundError:
+        print("No saved model found, begin to train...")
+        train_model()
+
+    def test_noisy_forward():
+        """
+        Adding noise to the sample
+        :return:
+        """
+        img = Convert.to_tensor(train_set[0][0][None, ...])  # Adding the batch dimension
+        img_10 = ddpm.noisy_forward(img, [10])[0]
+        img_20 = ddpm.noisy_forward(img, [20])[0]
+        img_40 = ddpm.noisy_forward(img, [40])[0]
+        img_80 = ddpm.noisy_forward(img, [80])[0]
+
+        imgs_np = Convert.to_numpy([img, img_10, img_20, img_40, img_80])
+        imgs_np = np.concatenate(imgs_np).reshape([-1, 28, 28]) / 2 + 0.5
+        show_image(imgs_np, 1)
+
+    def test_one_step_reconstruct():
+        """
+        One-step reconstruction: predict the noise and directly reconstruct the original sample.
+        Not the same as the step-by-step manner during sampling
+        :return:
+        """
+        img = Convert.to_tensor(train_set[0][0][None, ...])  # Adding the batch dimension
+
+        def reconstruct_at(step: int):
+            step = torch.tensor([step])
+            noisy_img = ddpm.noisy_forward(img, step)[0]
+            predicted_noise = ddpm.noise_estimator(noisy_img, step)
+            recovered_img = noisy_img - (1 - ddpm.accumulated_scales[step]) * predicted_noise
+            recovered_img = recovered_img / ddpm.accumulated_scales[step]
+            return recovered_img
+
+        imgs_np = Convert.to_numpy([img,
+                                 reconstruct_at(10),
+                                 reconstruct_at(20),
+                                 reconstruct_at(40),
+                                 reconstruct_at(80)])
+        imgs_np = np.concatenate(imgs_np, axis=0).reshape([-1, 28, 28]) / 2 + 0.5
+        show_image(imgs_np, 1)
+
+    def test_sampling_steps():
+        ys = Convert.to_tensor(torch.normal(0, 1, [1, 784]))
+
+        records = [ys]
+        with torch.no_grad():
+            for i in range(len(ddpm.noise_scales) - 1, -1, -1):
+                step_tensor = torch.ones((ys.shape[0],), device=ys.device, dtype=torch.long) * i
+
+                if i != 0:
+                    posterion_std = torch.sqrt(ddpm.noise_scales[i] * (1 - ddpm.accumulated_scales[i - 1]) / (1 - ddpm.accumulated_scales[i]))
+                else:
+                    posterion_std = 0
+
+                ys = (1 / torch.sqrt(1 - ddpm.noise_scales[i])) * \
+                     (ys - ddpm.noise_scales[i]/torch.sqrt(1 - ddpm.accumulated_scales[i]) * ddpm.noise_estimator(ys, step_tensor))\
+                     + posterion_std * torch.normal(0, 1, ys.shape, device=ys.device)
+                if i in [250, 200, 150, 100, 50, 0]:
+                    records.append(ys)
+
+        imgs_np = Convert.to_numpy(records)
+        imgs_np = np.concatenate(imgs_np, axis=0).reshape([-1, 28, 28]) / 2 + 0.5
+        imgs_np = np.clip(imgs_np, 0, 1)
+        show_image(imgs_np, 1)
+
+
+
+#    test_noisy_forward()
+#    test_one_step_reconstruct()
+    for i in range(10):
+        test_sampling_steps()

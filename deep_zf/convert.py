@@ -11,13 +11,15 @@ from deep_zf.data.utils import TransformationDataset
 
 class Convert:
     @staticmethod
-    def to_numpy(x: torch.Tensor) -> np.ndarray:
-        try:
-            return x.cpu().detach().numpy()
-        except:
-            pass
-
-        return x.cpu().numpy()
+    def to_numpy(x: Union[List, torch.Tensor]) -> Union[np.ndarray, List]:
+        if isinstance(x, torch.Tensor):
+            try:
+                return x.cpu().detach().numpy()
+            except:
+                pass
+            return x.cpu().numpy()
+        else:  # List
+            return [Convert.to_numpy(xx) for xx in x]
 
     @staticmethod
     def to_tensor(x: Union[List, torch.Tensor, np.ndarray, float]) -> Union[torch.Tensor, List]:
